@@ -1,0 +1,16 @@
+{
+  "name": "mediclear-workspace",
+  "version": "1.0.0",
+  "description": "MediClear: Mission-critical, AI-powered emergency medical orchestration system for real-time triage and hospital routing.",
+  "devDependencies": {
+    "autoprefixer": "^10.4.27",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.2"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^0.577.0",
+    "tailwind-merge": "^3.5.0"
+  }
+}
