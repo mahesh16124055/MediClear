@@ -28,33 +28,41 @@ public class GeminiService {
     }
 
     private AnalysisResult analyzeWithRetry(List<Map<String, Object>> parts, int attempt) throws Exception {
+        // Intelligence: Detect if it's an AI Studio Key (AIza) or a Vertex AI Token (usually starts with ya29 or AQ.Ab8)
+        boolean isAccessToken = apiKey != null && (apiKey.startsWith("ya29.") || apiKey.startsWith("AQ.Ab8") || apiKey.length() > 60);
+        
+        String baseUrl = isAccessToken ? "https://us-central1-aiplatform.googleapis.com" : "https://generativelanguage.googleapis.com";
+        String projectId = "promptwars-basic"; 
+        String location = "us-central1";
+        
         // Universal Schema Fallback: Prepend system prompt to user parts for legacy compatibility
         List<Map<String, Object>> optimizedParts = new ArrayList<>();
         optimizedParts.add(Map.of("text", "SYSTEM DIRECTIVE: " + getSystemPrompt()));
         optimizedParts.addAll(parts);
 
         Map<String, Object> content = Map.of("role", "user", "parts", optimizedParts);
-        
-        // Remove beta fields that cause 400 errors for non-whitelisted projects
-        Map<String, Object> generationConfig = Map.of(
-            "temperature", 0.3,
-            "maxOutputTokens", 2048
-        );
+        Map<String, Object> generationConfig = Map.of("temperature", 0.3, "maxOutputTokens", 2048);
+        Map<String, Object> requestBody = Map.of("contents", List.of(content), "generationConfig", generationConfig);
 
-        Map<String, Object> requestBody = Map.of(
-                "contents", List.of(content),
-                "generationConfig", generationConfig
-        );
-
-        // v1beta required for systemInstruction
-        // gemini-1.5-flash-latest is the definitive stable alias in v1beta
-        String uri = "/v1beta/models/gemini-1.5-flash-latest:generateContent?key=" + apiKey;
-        
-        System.out.println("[GeminiService] Calling AI Studio: v1beta (Attempt: " + (attempt + 1) + ")");
+        String uri;
+        if (isAccessToken) {
+            // Vertex AI Native REST URI
+            uri = "/v1/projects/" + projectId + "/locations/" + location + "/publishers/google/models/gemini-1.5-flash:generateContent";
+            System.out.println("[GeminiService] Routing to Vertex AI (OAuth Token Mode)");
+        } else {
+            // AI Studio (Generative Language) URI
+            uri = "/v1beta/models/gemini-1.5-flash-latest:generateContent?key=" + apiKey;
+            System.out.println("[GeminiService] Routing to AI Studio (API Key Mode)");
+        }
 
         try {
-            Map<String, Object> response = webClient.post()
-                    .uri(uri)
+            WebClient.RequestBodySpec requestSpec = WebClient.create(baseUrl).post().uri(uri);
+            
+            if (isAccessToken) {
+                requestSpec.header("Authorization", "Bearer " + apiKey);
+            }
+
+            Map<String, Object> response = requestSpec
                     .bodyValue(requestBody)
                     .retrieve()
                     .bodyToMono(Map.class)
@@ -62,7 +70,7 @@ public class GeminiService {
                     .block();
 
             if (response == null || !response.containsKey("candidates")) {
-                throw new RuntimeException("Invalid response from Gemini API");
+                throw new RuntimeException("Invalid response from Gemini API: " + response);
             }
 
             List<Map<String, Object>> candidates = (List<Map<String, Object>>) response.get("candidates");
@@ -80,12 +88,12 @@ public class GeminiService {
             return mapper.readValue(jsonText, AnalysisResult.class);
 
         } catch (org.springframework.web.reactive.function.client.WebClientResponseException e) {
-            if (e.getStatusCode().value() == 429 && attempt < 2) {
-                System.out.println("[GeminiService] Rate limited (429). Retrying in 2 seconds...");
+            if ((e.getStatusCode().value() == 429 || e.getStatusCode().value() == 503) && attempt < 2) {
+                System.out.println("[GeminiService] Retrying transient error (" + e.getStatusCode() + ")...");
                 Thread.sleep(2000);
                 return analyzeWithRetry(parts, attempt + 1);
             }
-            System.err.println("[GeminiService] API Error: " + e.getResponseBodyAsString());
+            System.err.println("[GeminiService] " + (isAccessToken ? "Vertex" : "AI Studio") + " Error: " + e.getResponseBodyAsString());
             throw new RuntimeException("Gemini returned " + e.getStatusCode() + ": " + e.getResponseBodyAsString(), e);
         } catch (Exception e) {
             System.err.println("[GeminiService] Error: " + e.getMessage());
