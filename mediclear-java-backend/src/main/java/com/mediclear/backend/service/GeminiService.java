@@ -28,16 +28,20 @@ public class GeminiService {
     }
 
     private AnalysisResult analyzeWithRetry(List<Map<String, Object>> parts, int attempt) throws Exception {
-        Map<String, Object> systemInstruction = Map.of("parts", List.of(Map.of("text", getSystemPrompt())));
-        Map<String, Object> content = Map.of("role", "user", "parts", parts);
+        // Universal Schema Fallback: Prepend system prompt to user parts for legacy compatibility
+        List<Map<String, Object>> optimizedParts = new ArrayList<>();
+        optimizedParts.add(Map.of("text", "SYSTEM DIRECTIVE: " + getSystemPrompt()));
+        optimizedParts.addAll(parts);
+
+        Map<String, Object> content = Map.of("role", "user", "parts", optimizedParts);
+        
+        // Remove beta fields that cause 400 errors for non-whitelisted projects
         Map<String, Object> generationConfig = Map.of(
-            "responseMimeType", "application/json",
             "temperature", 0.3,
             "maxOutputTokens", 2048
         );
 
         Map<String, Object> requestBody = Map.of(
-                "systemInstruction", systemInstruction,
                 "contents", List.of(content),
                 "generationConfig", generationConfig
         );
